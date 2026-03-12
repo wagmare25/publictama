@@ -68,7 +68,7 @@ on:
         default: "123456"
       
       RUSTDESK_PASSWORD:
-        description: "[macOS/Linux] Custom RustDesk password"
+        description: "[macOS] Custom RustDesk password"
         required: false
         default: "password123"
 
@@ -466,7 +466,7 @@ jobs:
         run: |
           echo "Creating cloudpc user..."
           sudo useradd -m -s /bin/bash -G sudo,audio,video cloudpc || true
-          echo "cloudpc:${{ github.event.inputs.RUSTDESK_PASSWORD }}" | sudo chpasswd
+          echo "cloudpc:cloudpc123" | sudo chpasswd
           
           echo "Adding cloudpc to sudoers..."
           echo "cloudpc ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/cloudpc > /dev/null
@@ -497,27 +497,6 @@ jobs:
           sudo dpkg -i /tmp/crd.deb || sudo apt-get install -f -y
           
           echo "✅ Chrome Remote Desktop installed!"
-
-      - name: "🦀 Install RustDesk"
-        run: |
-          echo "Downloading RustDesk..."
-          ARCH=$(uname -m)
-          
-          if [ "$ARCH" = "aarch64" ]; then
-            RUSTDESK_URL="https://github.com/rustdesk/rustdesk/releases/download/1.2.7-rc/rustdesk-1.2.7-rc.aarch64.AppImage"
-          else
-            RUSTDESK_URL="https://github.com/rustdesk/rustdesk/releases/download/1.2.7-rc/rustdesk-1.2.7-rc.x86_64.AppImage"
-          fi
-          
-          wget -q "$RUSTDESK_URL" -O /tmp/rustdesk.appimage
-          chmod +x /tmp/rustdesk.appimage
-          
-          echo "Installing RustDesk..."
-          sudo mkdir -p /opt/rustdesk
-          sudo cp /tmp/rustdesk.appimage /opt/rustdesk/rustdesk
-          sudo chmod +x /opt/rustdesk/rustdesk
-          
-          echo "✅ RustDesk installed!"
 
       - name: "🔧 Configure Chrome Remote Desktop"
         run: |
@@ -552,19 +531,6 @@ jobs:
             echo "⚠️  CRD may still be starting up..."
           fi
 
-      - name: "🦀 Start RustDesk Service"
-        run: |
-          echo "Starting RustDesk..."
-          /opt/rustdesk/rustdesk --password "${{ github.event.inputs.RUSTDESK_PASSWORD }}" &
-          
-          sleep 10
-          
-          if pgrep -f "rustdesk" > /dev/null; then
-            echo "✅ RustDesk is running!"
-          else
-            echo "⚠️  RustDesk may still be starting up..."
-          fi
-
       - name: "📸 Capture Desktop & Connection Info"
         run: |
           echo "Waiting for services to fully start (20s)..."
@@ -593,21 +559,18 @@ jobs:
           echo "🚀 STATUS: LINUX CLOUD PC READY!"
           echo "=========================================="
           echo ""
-          echo "📌 CONNECTION METHODS:"
+          echo "📌 CONNECTION METHOD:"
           echo ""
           echo "1️⃣  CHROME REMOTE DESKTOP:"
           echo "   🔗 Go to: https://remotedesktop.google.com/access"
           echo "   📌 PIN: ${{ github.event.inputs.LINUX_CRD_PIN }}"
           echo ""
-          echo "2️⃣  RUSTDESK:"
-          echo "   🔑 Password: ${{ github.event.inputs.RUSTDESK_PASSWORD }}"
-          echo "   📥 Install RustDesk from: https://rustdesk.com"
-          echo ""
           echo "🖥️  SYSTEM INFO:"
           echo "   🏗️  Architecture: $(uname -m)"
           echo "   📦 OS: $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
           echo "   💻 Display: :99"
-          echo "   👤 User: cloudpc"
+          echo "   👤 Default User: root"
+          echo "   👤 Created User: cloudpc (password: cloudpc123)"
           echo ""
           echo "=========================================="
           echo "⏳ Keeping server alive for 6 hours..."
