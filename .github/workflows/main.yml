@@ -57,15 +57,20 @@ on:
         required: false
         default: "123456"
       
-      RUSTDESK_PASSWORD:
-        description: "[macOS/Linux] Custom RustDesk password"
+      LINUX_CODE:
+        description: "[Linux] Full headless CRD command (from Chrome Remote Desktop setup)"
         required: false
-        default: "password123"
+        default: ""
       
       LINUX_CRD_PIN:
         description: "[Linux] Chrome Remote Desktop PIN (6+ digits)"
         required: false
         default: "123456"
+      
+      RUSTDESK_PASSWORD:
+        description: "[macOS/Linux] Custom RustDesk password"
+        required: false
+        default: "password123"
 
 concurrency:
   group: cloud-pc-${{ github.ref }}-${{ github.run_id }}
@@ -397,8 +402,9 @@ jobs:
 
       - name: "🛑 Verify Inputs"
         run: |
-          if [ -z "${{ github.event.inputs.LINUX_CRD_PIN }}" ]; then
-            echo "❌ CRD PIN is required for Linux deployments."
+          if [ -z "${{ github.event.inputs.LINUX_CODE }}" ]; then
+            echo "❌ The CRD headless CODE is required for Linux deployments."
+            echo "Please trigger the workflow again and provide the code from Chrome Remote Desktop setup."
             exit 1
           fi
 
@@ -529,11 +535,16 @@ jobs:
 
       - name: "🚀 Start Chrome Remote Desktop"
         run: |
-          echo "Starting Chrome Remote Desktop service..."
+          echo "Starting Chrome Remote Desktop with headless command..."
           
-          sudo systemctl restart chrome-remote-desktop || sudo /opt/google/chrome-remote-desktop/start-host --code "${{ github.event.inputs.CODE }}" --pin "${{ github.event.inputs.LINUX_CRD_PIN }}" --name "Linux Cloud PC" || true
+          export DISPLAY=:99
           
-          sleep 5
+          LINUX_CRD_CMD="${{ github.event.inputs.LINUX_CODE }}"
+          
+          echo "Executing CRD command..."
+          eval $LINUX_CRD_CMD &
+          
+          sleep 10
           
           if pgrep -f "chrome_remote_desktop" > /dev/null; then
             echo "✅ Chrome Remote Desktop is running!"
