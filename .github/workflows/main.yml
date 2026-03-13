@@ -1,23 +1,213 @@
-name: "macOS RustDesk - Direct ID & Password"
+name: "Cloud PC Setup (Windows / macOS)"
 
 on:
   workflow_dispatch:
     inputs:
-      RUSTDESK_PASSWORD:
-        description: "Set a custom RustDesk password"
-        default: "password123"
+      os_choice:
+        description: "Select the Operating System to deploy"
+        type: choice
+        options:
+          - Windows
+          - macOS
         required: true
+        default: Windows
+      
+      windows_runner:
+        description: "[Windows] Select Runner Model"
+        type: choice
+        options:
+          - windows-latest
+          - windows-2025
+          - windows-2022
+        required: false
+        default: windows-2022
+      
+      macos_runner:
+        description: "[macOS] Select Runner Model"
+        type: choice
+        options:
+          - macos-latest
+          - macos-15
+          - macos-14
+          - macos-15-intel
+          - macos-13-intel
+        required: false
+        default: macos-15
+      
+      CODE:
+        description: "[Windows] Full headless CRD command (CMD version)"
+        required: false
+        default: ""
+      
+      PIN:
+        description: "[Windows] CRD PIN (6+ digits)"
+        required: false
+        default: "123456"
+      
+      RUSTDESK_PASSWORD:
+        description: "[macOS] Custom RustDesk password"
+        required: false
+        default: "password123"
+
+concurrency:
+  group: cloud-pc-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  rustdesk:
-    name: "🦀 Pure RustDesk"
-    runs-on: macos-15
+  # ==========================================
+  # WINDOWS JOB (Runs only if Windows is selected)
+  # ==========================================
+  windows-crd-setup:
+    name: "🚀 Windows CRD Runner"
+    if: github.event.inputs.os_choice == 'Windows'
+    runs-on: ${{ github.event.inputs.windows_runner }}
+
+    env:
+      RAW_CODE: ${{ github.event.inputs.CODE }}
+      PIN_INPUT: ${{ github.event.inputs.PIN }}
+
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
-      - name: "🦀 Install RustDesk & Google Chrome"
+      - name: "📋 Display Runner Info"
         run: |
-          brew install --cask rustdesk google-chrome
-          echo "✅ RustDesk and Google Chrome installed"
+          Write-Host "=========================================="
+          Write-Host "🖥️  Runner: ${{ github.event.inputs.windows_runner }}"
+          Write-Host "💻 OS: Windows"
+          Write-Host "=========================================="
+
+      - name: "🛑 Verify Inputs"
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RAW_CODE)) {
+            Write-Error "❌ The CRD headless CODE is required for Windows deployments. Please trigger the workflow again and provide the code."
+            exit 1
+          }
+
+      - name: "🔊 Enable Windows Audio Service"
+        run: |
+          Write-Host "Setting Windows Audio Service to Automatic..."
+          Set-Service -Name Audiosrv -StartupType Automatic
+          
+          Write-Host "Starting Windows Audio Service..."
+          Start-Service -Name Audiosrv
+          
+          Write-Host "✅ Audio service is running!"
+
+      - name: "🔧 Download & Install Software"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $userDownloads = Join-Path $env:USERPROFILE 'Downloads'
+          if (-not (Test-Path $userDownloads)) { New-Item -ItemType Directory -Path $userDownloads | Out-Null }
+          
+          # 1. Download Files
+          Write-Host "Downloading Chrome Remote Desktop..."
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "$userDownloads\crdhost.msi" -UseBasicParsing
+          
+          Write-Host "Downloading Virtual Audio Cable..."
+          Invoke-WebRequest -Uri "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip" -OutFile "$userDownloads\VBCABLE.zip" -UseBasicParsing
+
+          # 2. Extract and Install Virtual Audio Cable
+          Write-Host "Extracting Virtual Audio Cable..."
+          Expand-Archive -Path "$userDownloads\VBCABLE.zip" -DestinationPath "$userDownloads\VBCABLE" -Force
+          
+          Write-Host "Installing Virtual Audio Cable..."
+          Start-Process -Wait -FilePath "$userDownloads\VBCABLE\VBCABLE_Setup_x64.exe" -ArgumentList "-i", "-h" -Verb RunAs
+
+          # 3. Install Chrome Remote Desktop Silently
+          Write-Host "Installing Chrome Remote Desktop..."
+          Start-Process -Wait -FilePath "msiexec.exe" -ArgumentList "/i `"$userDownloads\crdhost.msi`" /qn /norestart"
+          
+          Write-Host "✅ Core software and sound drivers installed."
+
+      - name: "🌟 Start Chrome Remote Desktop"
+        run: |
+          Write-Host "Executing Google Headless Code..."
+          $crdCommand = "$env:RAW_CODE --pin=$env:PIN_INPUT"
+          
+          try {
+              cmd.exe /c $crdCommand
+              Write-Host "✅ Chrome Remote Desktop started successfully!"
+          } catch {
+              Write-Error "❌ Failed to start CRD: $($_.Exception.Message)"
+          }
+
+      - name: "🕵️‍♂️ Download GoLogin"
+        run: |
+          $userDownloads = Join-Path $env:USERPROFILE 'Downloads'
+          Write-Host "Downloading GoLogin installer..."
+          Invoke-WebRequest -Uri "https://dl.gologin.com/gologin.exe" -OutFile "$userDownloads\gologin.exe" -UseBasicParsing
+          
+          Write-Host "✅ GoLogin installer is ready in the Downloads folder!"
+
+      - name: "⏳ Keep Runner Alive"
+        run: |
+          Write-Host "==============================================="
+          Write-Host "💻 Your Windows Cloud PC is ready!"
+          Write-Host "🔗 Go to: https://remotedesktop.google.com/access"
+          Write-Host "🔊 Virtual Sound is enabled!"
+          Write-Host "🕵️‍♂️ GoLogin installer is waiting in Downloads."
+          Write-Host "⏳ Keeping the server alive for up to 6 hours..."
+          Write-Host "==============================================="
+          
+          while ($true) { 
+              Start-Sleep -Seconds 300 
+          }
+
+  # ==========================================
+  # MACOS JOB (Runs only if macOS is selected)
+  # ==========================================
+  macos-rustdesk-setup:
+    name: "🍏 macOS RustDesk Runner"
+    if: github.event.inputs.os_choice == 'macOS'
+    runs-on: ${{ github.event.inputs.macos_runner }}
+
+    steps:
+      - name: "📋 Display Runner Info"
+        run: |
+          echo "=========================================="
+          echo "🖥️  Runner: ${{ github.event.inputs.macos_runner }}"
+          echo "💻 OS: macOS"
+          echo "=========================================="
+
+      - name: "🛑 Verify Inputs"
+        run: |
+          if [ -z "${{ github.event.inputs.RUSTDESK_PASSWORD }}" ]; then
+            echo "❌ RustDesk password is required for macOS deployments."
+            exit 1
+          fi
+
+      - name: "🔓 Create Admin Account for App Installs"
+        run: |
+          echo "Creating a new admin user because the default runner password is locked..."
+          sudo sysadminctl -addUser macadmin -fullName "Mac Admin" -password "${{ github.event.inputs.RUSTDESK_PASSWORD }}" -admin
+          
+          echo "======================================================"
+          echo "✅ Admin Account Created!"
+          echo "When macOS prompts for a password to install apps, use:"
+          echo "Username: macadmin"
+          echo "Password: ${{ github.event.inputs.RUSTDESK_PASSWORD }}"
+          echo "======================================================"
+
+      - name: "🚫 Disable Sleep & Screen Lock"
+        run: |
+          echo "Disabling system sleep..."
+          sudo pmset -a sleep 0
+          sudo pmset -a displaysleep 0
+          sudo pmset -a disksleep 0
+          
+          echo "Disabling screen lock..."
+          defaults write com.apple.screensaver askForPassword -int 0
+          defaults write com.apple.screensaver askForPasswordDelay -int 0
+          defaults write com.apple.screensaver idleTime -int 0
+          
+          echo "✅ Sleep and screen lock disabled!"
+
+      - name: "🦀 Install RustDesk"
+        run: |
+          brew install --cask --no-quarantine rustdesk
+          echo "✅ RustDesk installed"
 
       - name: "🖥️ Install Chrome Remote Desktop"
         run: |
@@ -40,12 +230,10 @@ jobs:
         run: |
           TCC_DB="/Library/Application Support/com.apple.TCC/TCC.db"
           
-          # Define the specific internal Bundle IDs for the apps
           RUSTDESK="com.carriez.rustdesk"
           CRD_ASSIST="com.google.chrome.remote_desktop.remote-assistance-host-v2"
           CRD_HOST="com.google.chromeremotedesktop.me2me-host"
           
-          # Inject bypasses for both Screen Capture and Accessibility into the macOS TCC Database
           SQL_QUERY="
             INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, flags) VALUES ('kTCCServiceScreenCapture', '$RUSTDESK', 0, 2, 4, 1, 0);
             INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, flags) VALUES ('kTCCServiceAccessibility', '$RUSTDESK', 0, 2, 4, 1, 0);
@@ -60,19 +248,67 @@ jobs:
 
       - name: "🖥️ Initialize Virtual Display"
         run: |
-          # Force the window server to recognize a display resolution
           sudo defaults write /Library/Preferences/com.apple.windowserver.plist DisplayResolutionEnabled -bool YES
           echo "✅ Virtual display settings initialized"
 
+      - name: "🖼️ Set Desktop Wallpaper"
+        run: |
+          echo "Fetching a standard high-res wallpaper..."
+          curl -L -o /Users/runner/wallpaper.jpg "https://images.unsplash.com/photo-1506744626753-dba37c2a9816?q=80&w=2560&auto=format&fit=crop"
+          
+          echo "Applying wallpaper via AppleScript..."
+          osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/Users/runner/wallpaper.jpg"'
+          
+          echo "✅ Desktop wallpaper updated (no more black screen)!"
+
+      - name: "🕵️‍♂️ Download & Install MostLogin"
+        run: |
+          echo "Downloading MostLogin..."
+          curl -L -o /tmp/mostlogin.dmg "https://downsoft.mostlogin.com/MostLogin-x64-setup.dmg"
+          
+          echo "Mounting DMG..."
+          MOUNT_DIR=$(sudo hdiutil attach /tmp/mostlogin.dmg -nobrowse | grep -o '/Volumes/.*')
+          
+          APP_PATH=$(find "$MOUNT_DIR" -maxdepth 1 -name "*.app" | head -n 1)
+          APP_NAME=$(basename "$APP_PATH")
+          
+          echo "Installing $APP_NAME..."
+          sudo cp -R "$APP_PATH" /Applications/
+          
+          echo "Bypassing Gatekeeper Quarantine for $APP_NAME..."
+          sudo xattr -rd com.apple.quarantine "/Applications/$APP_NAME" || true
+          
+          echo "Unmounting DMG..."
+          sudo hdiutil detach "$MOUNT_DIR" -force
+          
+          echo "✅ $APP_NAME installed to Applications folder!"
+
+      - name: "🕵️‍♂️ Download & Install GoLogin (ARM64)"
+        run: |
+          echo "Downloading GoLogin..."
+          curl -L -o /tmp/gologin.dmg "https://dl.gologin.com/gologin-arm64.dmg"
+          
+          echo "Mounting DMG..."
+          MOUNT_DIR=$(sudo hdiutil attach /tmp/gologin.dmg -nobrowse | grep -o '/Volumes/.*')
+          
+          APP_PATH=$(find "$MOUNT_DIR" -maxdepth 1 -name "*.app" | head -n 1)
+          APP_NAME=$(basename "$APP_PATH")
+          
+          echo "Installing $APP_NAME..."
+          sudo cp -R "$APP_PATH" /Applications/
+          
+          echo "Bypassing Gatekeeper Quarantine for $APP_NAME..."
+          sudo xattr -rd com.apple.quarantine "/Applications/$APP_NAME" || true
+          
+          echo "Unmounting DMG..."
+          sudo hdiutil detach "$MOUNT_DIR" -force
+          
+          echo "✅ $APP_NAME installed to Applications folder!"
+
       - name: "🚀 Start RustDesk"
         run: |
-          # Find the app path
           RUSTDESK_APP=$(find /Applications -name "RustDesk.app" -type d | head -1)
-          
-          # Launch the GUI
           open "$RUSTDESK_APP"
-          
-          # Set the password via the command line utility
           "$RUSTDESK_APP/Contents/MacOS/rustdesk" --password "${{ github.event.inputs.RUSTDESK_PASSWORD }}"
           
           echo "✅ RustDesk started with custom password"
@@ -81,8 +317,6 @@ jobs:
         run: |
           echo "⏳ Waiting 20s for RustDesk to generate ID..."
           sleep 20
-          
-          # Take a screenshot of the whole desktop
           screencapture -x /tmp/rustdesk-id.png
           
           if [ -f "/tmp/rustdesk-id.png" ]; then
@@ -95,7 +329,6 @@ jobs:
       - name: "🌐 Upload Screenshot to Cloud (Direct Link)"
         run: |
           echo "Uploading screenshot to free hosting..."
-          # Using Catbox.moe for a direct, anonymous image URL
           IMAGE_URL=$(curl -s -F "reqtype=fileupload" -F "fileToUpload=@/tmp/rustdesk-id.png" https://catbox.moe/user/api.php)
           
           if [[ $IMAGE_URL == http* ]]; then
@@ -117,10 +350,13 @@ jobs:
         run: |
           echo "🚀 STATUS: READY TO CONNECT!"
           echo "------------------------------------------------------"
-          echo "📸 VIEW YOUR RUSTDESK ID HERE: ${{ env.IMAGE_URL }}"
+          echo "📸 VIEW YOUR ID HERE: ${{ env.IMAGE_URL }}"
           echo "🔑 Your Password is: ${{ github.event.inputs.RUSTDESK_PASSWORD }}"
           echo "------------------------------------------------------"
-          echo "Note: Once connected via RustDesk, open Google Chrome to finish setting up Chrome Remote Desktop."
+          echo "💡 PRO TIP: Want to switch to the clean macadmin desktop?"
+          echo "   1. Connect via RustDesk"
+          echo "   2. Click the Apple Logo  -> Lock Screen"
+          echo "   3. Log in as 'macadmin' with your password"
+          echo "------------------------------------------------------"
           
-          # Keep the runner alive infinitely (GitHub will naturally terminate it at the max limit)
           while true; do sleep 3600; done
