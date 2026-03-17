@@ -21,7 +21,7 @@ on:
       RUSTDESK_PASSWORD:
         description: "[macOS] Permanent RustDesk password (for reconnecting after disconnect)"
         required: false
-        default: "CloudPC@1234"
+        default: "Shawon63@"
 concurrency:
   group: cloud-pc-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
@@ -115,52 +115,81 @@ jobs:
           curl -L -o /tmp/mostlogin.dmg "https://downsoft.mostlogin.com/MostLogin-x64-setup.dmg"
           MOUNT_ML=$(sudo hdiutil attach /tmp/mostlogin.dmg -nobrowse | grep -o '/Volumes/.*')
           sudo cp -R "$MOUNT_ML"/*.app /Applications/
-          sudo hdiutil detach "$MOUNT_ML" -force
       - name: "🔐 Set RustDesk Permanent Password"
         env:
           RD_PASSWORD: ${{ github.event.inputs.RUSTDESK_PASSWORD }}
         run: |
           RUSTDESK_BIN="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
           CONFIG_DIR="$HOME/Library/Application Support/com.rustdesk.RustDesk"
-
-          echo "⚙️ Initializing RustDesk config directory..."
-          mkdir -p "$CONFIG_DIR"
-
-          # Start RustDesk briefly so it generates the device ID and base config
-          open /Applications/RustDesk.app
-          sleep 20
-
-          # Set permanent password via RustDesk CLI
-          echo "🔑 Setting permanent password..."
-          "$RUSTDESK_BIN" --password "$RD_PASSWORD" || true
-          sleep 3
-
-          # Force permanent-password-only mode in config
           CONFIG_FILE="$CONFIG_DIR/RustDesk2.toml"
-          if grep -q "verification-method" "$CONFIG_FILE" 2>/dev/null; then
-            sed -i '' 's/verification-method = .*/verification-method = "use-permanent-password"/' "$CONFIG_FILE"
-          else
-            echo '' >> "$CONFIG_FILE"
-            echo '[options]' >> "$CONFIG_FILE"
-            echo 'verification-method = "use-permanent-password"' >> "$CONFIG_FILE"
-          fi
 
-          echo "✅ Permanent password configured. Restarting RustDesk..."
-          pkill -f RustDesk || true
-          sleep 3
+          # Phase 1 — Init: launch RustDesk so it generates device ID + base config
+          echo "⚙️ Phase 1: Initializing RustDesk config (generating device ID)..."
+          mkdir -p "$CONFIG_DIR"
           open /Applications/RustDesk.app
-          sleep 20
+          sleep 30
 
-          # Get the RustDesk ID
-          RD_ID=$("$RUSTDESK_BIN" --get-id 2>/dev/null | tr -d '[:space:]' || echo "see-screenshot")
-          echo "RD_ID=$RD_ID" >> $GITHUB_ENV
+          # Phase 2 — Kill app fully BEFORE setting password (avoid second-instance IPC conflict)
+          echo "🛑 Phase 2: Stopping RustDesk..."
+          pkill -9 -f "RustDesk" 2>/dev/null || true
+          sleep 5
+
+          # Phase 3 — Set password while app is stopped (writes hash to config file)
+          echo "🔑 Phase 3: Setting permanent password..."
+          "$RUSTDESK_BIN" --password "$RD_PASSWORD" &
+          RD_PW_PID=$!
+          sleep 8
+          kill $RD_PW_PID 2>/dev/null || true
+          pkill -9 -f "RustDesk" 2>/dev/null || true
+          sleep 3
+
+          # Phase 4 — Patch TOML with Python to enforce permanent-password-only mode
+          echo "📝 Phase 4: Patching config to enforce permanent-password-only mode..."
+          python3 - <<'PYEOF'
+import os, re
+config_path = os.path.expanduser(
+    "~/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml"
+)
+vm_line = 'verification-method = "use-permanent-password"'
+if not os.path.exists(config_path):
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, "w") as f:
+        f.write(f"[options]\n{vm_line}\n")
+    print("Created fresh config")
+else:
+    with open(config_path, "r") as f:
+        content = f.read()
+    if "verification-method" in content:
+        content = re.sub(r'verification-method\s*=\s*"[^"]*"', vm_line, content)
+        print("Updated existing verification-method")
+    elif "[options]" in content:
+        content = content.replace("[options]", f"[options]\n{vm_line}", 1)
+        print("Inserted under [options]")
+    else:
+        content += f"\n[options]\n{vm_line}\n"
+        print("Appended [options] section")
+    with open(config_path, "w") as f:
+        f.write(content)
+    print(f"Saved: {config_path}")
+PYEOF
+
+          # Phase 5 — Relaunch RustDesk with permanent password active
+          echo "🚀 Phase 5: Relaunching RustDesk..."
+          open /Applications/RustDesk.app
+          sleep 25
+
+          # Extract ID from config (avoids spawning a second instance via --get-id)
+          RD_ID=$(grep -oE 'id\s*=\s*"[0-9]+"' "$CONFIG_FILE" 2>/dev/null \
+                  | grep -oE '[0-9]+' | head -1 || echo "check-screenshot")
+          echo "RD_ID=${RD_ID}" >> $GITHUB_ENV
 
           echo ""
           echo "================================================"
-          echo "  🖥️  RustDesk ID       : $RD_ID"
+          echo "  🖥️  RustDesk ID       : ${RD_ID}"
           echo "  🔑  Password (FIXED)  : $RD_PASSWORD"
           echo "  ♻️  Reconnect anytime  : password won't change"
           echo "================================================"
+
       - name: "📸 Capture RustDesk Screenshot"
         run: |
           screencapture -x /tmp/rustdesk-id.png
