@@ -19,7 +19,7 @@ on:
         required: false
         default: "123456"
       MAC_PASS:
-        description: "[macOS] Permanent RustDesk Password"
+        description: "[macOS] Permanent AnyDesk Password"
         required: false
         default: "CloudPC123!"
 
@@ -90,7 +90,7 @@ jobs:
           while ($true) { Start-Sleep -Seconds 300 }
 
   # ==========================================
-  # MACOS JOB (Carpet-Bomb Directory Fix)
+  # MACOS JOB (AnyDesk Permanent Password Bypass)
   # ==========================================
   macos-setup:
     name: "🍏 macOS Remote Runner"
@@ -108,63 +108,41 @@ jobs:
           curl -L -o /Users/runner/wallpaper.jpg "https://images.unsplash.com/photo-1506744626753-dba37c2a9816?q=80&w=2560"
           osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/Users/runner/wallpaper.jpg"'
       
-      - name: "🖥️ Install Remote Tools"
+      - name: "🖥️ Install AnyDesk & Tools"
         run: |
-          brew install --cask rustdesk
+          # Install AnyDesk
+          brew install --cask anydesk
           
-          curl -L -o /tmp/crd.dmg https://dl.google.com/chrome-remote-desktop/chromeremotedesktop.dmg
-          sudo hdiutil attach /tmp/crd.dmg -nobrowse
-          
-          PKG_PATH=$(find /Volumes/Chrome\ Remote\ Desktop* -name "*.pkg" | head -n 1)
-          sudo installer -pkg "$PKG_PATH" -target /
-          
-          VOL_PATH=$(dirname "$PKG_PATH")
-          sudo hdiutil detach "$VOL_PATH" -force
-      
-      - name: "🕵️‍♂️ Install Browsers"
-        run: |
+          # Install MostLogin
           curl -L -o /tmp/mostlogin.dmg "https://downsoft.mostlogin.com/MostLogin-x64-setup.dmg"
           MOUNT_ML=$(sudo hdiutil attach /tmp/mostlogin.dmg -nobrowse | grep -o '/Volumes/.*')
           sudo cp -R "$MOUNT_ML"/*.app /Applications/
           sudo hdiutil detach "$MOUNT_ML" -force
       
-      - name: "🚀 Configure RustDesk Daemon & Password"
+      - name: "🚀 Configure AnyDesk Daemon & Permanent Password"
         run: |
-          # 1. Carpet-bomb all possible config directories to kill 'os error 2' permanently
-          sudo mkdir -p "/Library/Application Support/RustDesk/config"
-          sudo mkdir -p "/var/root/Library/Application Support/RustDesk/config"
-          sudo mkdir -p "/var/root/.config/rustdesk"
-          mkdir -p "$HOME/Library/Application Support/RustDesk/config"
-          mkdir -p "$HOME/.config/rustdesk"
+          # 1. Start the true AnyDesk background service
+          sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service &
           
-          # 2. Start the daemon as ROOT so it accepts permanent settings
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --service > /dev/null 2>&1 &
-          
-          # 3. Give it time to boot
+          # 2. Give the daemon time to boot and generate the network ID
           sleep 15
           
-          # 4. Inject the permanent password AS ROOT 
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${{ env.MAC_PASS }}"
+          # 3. Inject the permanent password natively via standard input
+          echo "${{ env.MAC_PASS }}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
           
-          # 5. Extract the RustDesk ID AS ROOT
-          RUSTDESK_ID=$(sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id)
+          # 4. Extract the AnyDesk ID locally
+          ANYDESK_ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id)
+          echo "ANY_ID=$ANYDESK_ID" >> $GITHUB_ENV
           
-          # 6. Fallback: Rip ID directly from whichever TOML file generated successfully
-          if [ -z "$RUSTDESK_ID" ]; then
-            if [ -f "/Library/Application Support/RustDesk/config/RustDesk2.toml" ]; then
-              RUSTDESK_ID=$(sudo grep "^id =" "/Library/Application Support/RustDesk/config/RustDesk2.toml" | cut -d"'" -f2)
-            elif [ -f "/var/root/Library/Application Support/RustDesk/config/RustDesk2.toml" ]; then
-              RUSTDESK_ID=$(sudo grep "^id =" "/var/root/Library/Application Support/RustDesk/config/RustDesk2.toml" | cut -d"'" -f2)
-            fi
-          fi
-          
-          echo "RUST_ID=$RUSTDESK_ID" >> $GITHUB_ENV
+          # 5. Bring GUI to foreground
+          open /Applications/AnyDesk.app
+          sleep 5
       
       - name: "⏳ Connection Window"
         run: |
           echo "============================================================"
-          echo "✅ RUSTDESK IS CONFIGURED AND RUNNING"
+          echo "✅ ANYDESK IS CONFIGURED AND RUNNING"
           echo "🔑 Permanent Password: ${{ env.MAC_PASS }}"
-          echo "🆔 RustDesk ID: ${{ env.RUST_ID }}"
+          echo "🆔 AnyDesk Address: ${{ env.ANY_ID }}"
           echo "============================================================"
           while true; do sleep 3600; done
