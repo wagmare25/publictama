@@ -136,49 +136,74 @@ jobs:
           CONFIG_DIR="$HOME/Library/Application Support/com.rustdesk.RustDesk"
           CONFIG_FILE="$CONFIG_DIR/RustDesk2.toml"
 
-          echo "⚙️ Phase 1: Initializing RustDesk config..."
+          # Phase 1 - Init: launch RustDesk so it generates device ID + base config
+          echo "Phase 1: Initializing RustDesk config (generating device ID)..."
           mkdir -p "$CONFIG_DIR"
           open /Applications/RustDesk.app
           sleep 30
 
-          echo "🛑 Phase 2: Stopping RustDesk..."
+          # Phase 2 - Kill app fully BEFORE setting password (avoid second-instance IPC conflict)
+          echo "Phase 2: Stopping RustDesk..."
           pkill -9 -f "RustDesk" 2>/dev/null || true
           sleep 5
 
-          echo "🔑 Phase 3: Setting permanent password..."
+          # Phase 3 - Set password while app is stopped (writes hash to config file)
+          echo "Phase 3: Setting permanent password..."
           "$RUSTDESK_BIN" --password "$RD_PASSWORD" &
           RD_PW_PID=$!
           sleep 8
           kill $RD_PW_PID 2>/dev/null || true
           pkill -9 -f "RustDesk" 2>/dev/null || true
+          sleep 3
 
-          echo "📝 Phase 4: Patching config..."
-          python3 - <<'PYEOF'
-import os, re
-config_path = os.path.expanduser("~/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml")
-vm_line = 'verification-method = "use-permanent-password"'
-if not os.path.exists(config_path):
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    with open(config_path, "w") as f:
-        f.write(f"[options]\n{vm_line}\n")
-else:
-    with open(config_path, "r") as f:
-        content = f.read()
-    if "verification-method" in content:
-        content = re.sub(r'verification-method\s*=\s*"[^"]*"', vm_line, content)
-    elif "[options]" in content:
-        content = content.replace("[options]", f"[options]\n{vm_line}", 1)
-    else:
-        content += f"\n[options]\n{vm_line}\n"
-    with open(config_path, "w") as f:
-        f.write(content)
-PYEOF
+          echo "Phase 4: Will patch config in next step..."
 
-          echo "🚀 Phase 5: Relaunching RustDesk..."
+      - name: "📝 Patch RustDesk Config (Permanent Password Mode)"
+        run: |
+          python3 -c "
+          import os, re
+          config_path = os.path.expanduser('~/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml')
+          vm_line = 'verification-method = \"use-permanent-password\"'
+          if not os.path.exists(config_path):
+              os.makedirs(os.path.dirname(config_path), exist_ok=True)
+              open(config_path, 'w').write('[options]\n' + vm_line + '\n')
+              print('Created fresh config')
+          else:
+              content = open(config_path).read()
+              if 'verification-method' in content:
+                  content = re.sub(r'verification-method\s*=\s*\"[^\"]*\"', vm_line, content)
+                  print('Updated existing verification-method')
+              elif '[options]' in content:
+                  content = content.replace('[options]', '[options]\n' + vm_line, 1)
+                  print('Inserted under [options]')
+              else:
+                  content += '\n[options]\n' + vm_line + '\n'
+                  print('Appended [options] section')
+              open(config_path, 'w').write(content)
+              print('Saved: ' + config_path)
+          "
+
+      - name: "🚀 Relaunch RustDesk & Get ID"
+        env:
+          RD_PASSWORD: ${{ github.event.inputs.RUSTDESK_PASSWORD }}
+        run: |
+          CONFIG_FILE="$HOME/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml"
+
+          # Phase 5 - Relaunch RustDesk with permanent password active
+          echo "Phase 5: Relaunching RustDesk..."
           open /Applications/RustDesk.app
           sleep 25
-          RD_ID=$(grep -oE 'id\s*=\s*"[0-9]+"' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "unknown")
+
+          # Extract ID from config (avoids spawning a second instance via --get-id)
+          RD_ID=$(grep -oE 'id\s*=\s*"[0-9]+"' "$CONFIG_FILE" 2>/dev/null \
+                  | grep -oE '[0-9]+' | head -1 || echo "check-screenshot")
           echo "RD_ID=${RD_ID}" >> $GITHUB_ENV
+
+          echo "================================================"
+          echo "  RustDesk ID       : ${RD_ID}"
+          echo "  Password (FIXED)  : $RD_PASSWORD"
+          echo "  Reconnect anytime : password won't change"
+          echo "================================================"
 
       - name: "📸 Capture RustDesk Screenshot"
         run: |
