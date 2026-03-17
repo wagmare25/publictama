@@ -106,8 +106,10 @@ jobs:
           brew install --cask --no-quarantine rustdesk
           curl -L -o /tmp/crd.dmg https://dl.google.com/chrome-remote-desktop/chromeremotedesktop.dmg
           sudo hdiutil attach /tmp/crd.dmg -nobrowse
-          sudo installer -pkg $(find /Volumes/Chrome\ Remote\ Desktop* -name "*.pkg") -target /
-          sudo hdiutil detach /Volumes/Chrome\ Remote\ Desktop* -force
+          CRD_VOL=$(find /Volumes -maxdepth 1 -name "Chrome Remote Desktop*" | head -1)
+          CRD_PKG=$(find "$CRD_VOL" -name "*.pkg" | head -1)
+          sudo installer -pkg "$CRD_PKG" -target /
+          sudo hdiutil detach "$CRD_VOL" -force
       - name: "🕵️‍♂️ Install Browsers"
         run: |
           curl -L -o /tmp/mostlogin.dmg "https://downsoft.mostlogin.com/MostLogin-x64-setup.dmg"
