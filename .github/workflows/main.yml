@@ -90,7 +90,7 @@ jobs:
           while ($true) { Start-Sleep -Seconds 300 }
 
   # ==========================================
-  # MACOS JOB (Sudo Privilege Fix)
+  # MACOS JOB (Carpet-Bomb Directory Fix)
   # ==========================================
   macos-setup:
     name: "🍏 macOS Remote Runner"
@@ -130,8 +130,12 @@ jobs:
       
       - name: "🚀 Configure RustDesk Daemon & Password"
         run: |
-          # 1. Create the system-level config folder so it doesn't crash
+          # 1. Carpet-bomb all possible config directories to kill 'os error 2' permanently
           sudo mkdir -p "/Library/Application Support/RustDesk/config"
+          sudo mkdir -p "/var/root/Library/Application Support/RustDesk/config"
+          sudo mkdir -p "/var/root/.config/rustdesk"
+          mkdir -p "$HOME/Library/Application Support/RustDesk/config"
+          mkdir -p "$HOME/.config/rustdesk"
           
           # 2. Start the daemon as ROOT so it accepts permanent settings
           sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --service > /dev/null 2>&1 &
@@ -139,15 +143,19 @@ jobs:
           # 3. Give it time to boot
           sleep 15
           
-          # 4. Inject the permanent password AS ROOT (Fixes the privilege error)
+          # 4. Inject the permanent password AS ROOT 
           sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${{ env.MAC_PASS }}"
           
           # 5. Extract the RustDesk ID AS ROOT
           RUSTDESK_ID=$(sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id)
           
-          # 6. Fallback: Rip ID directly from the system-level TOML file
+          # 6. Fallback: Rip ID directly from whichever TOML file generated successfully
           if [ -z "$RUSTDESK_ID" ]; then
-            RUSTDESK_ID=$(sudo grep "^id =" "/Library/Application Support/RustDesk/config/RustDesk2.toml" | cut -d"'" -f2)
+            if [ -f "/Library/Application Support/RustDesk/config/RustDesk2.toml" ]; then
+              RUSTDESK_ID=$(sudo grep "^id =" "/Library/Application Support/RustDesk/config/RustDesk2.toml" | cut -d"'" -f2)
+            elif [ -f "/var/root/Library/Application Support/RustDesk/config/RustDesk2.toml" ]; then
+              RUSTDESK_ID=$(sudo grep "^id =" "/var/root/Library/Application Support/RustDesk/config/RustDesk2.toml" | cut -d"'" -f2)
+            fi
           fi
           
           echo "RUST_ID=$RUSTDESK_ID" >> $GITHUB_ENV
