@@ -19,7 +19,7 @@ on:
         required: false
         default: "123456"
       MAC_PASS:
-        description: "[macOS] Permanent AnyDesk Password"
+        description: "[macOS] Permanent VNC Password"
         required: false
         default: "CloudPC123!"
 
@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   # ==========================================
-  # WINDOWS JOB (Fully Automated MostLogin)
+  # WINDOWS JOB (Unchanged & Working)
   # ==========================================
   windows-crd-setup:
     name: "🚀 Windows 2022 CRD Runner"
@@ -66,18 +66,10 @@ jobs:
         run: |
           $userDownloads = Join-Path $env:USERPROFILE 'Downloads'
           $mlInstaller = "$userDownloads\MostLogin-setup.exe"
-          
-          Write-Host "Downloading MostLogin..."
           Invoke-WebRequest -Uri "https://downsoft.mostlogin.com/MostLogin-setup.exe" -OutFile $mlInstaller -UseBasicParsing
-          
-          Write-Host "Performing Silent Installation..."
           Start-Process -FilePath $mlInstaller -ArgumentList "/S" -Wait
-          
-          Write-Host "Launching MostLogin..."
           $mlPath = "C:\Program Files (x86)\MostLogin\MostLogin.exe"
-          if (Test-Path $mlPath) {
-              Start-Process -FilePath $mlPath
-          } else {
+          if (Test-Path $mlPath) { Start-Process -FilePath $mlPath } else {
               $altPath = "$env:LocalAppData\Programs\MostLogin\MostLogin.exe"
               if (Test-Path $altPath) { Start-Process -FilePath $altPath }
           }
@@ -90,59 +82,53 @@ jobs:
           while ($true) { Start-Sleep -Seconds 300 }
 
   # ==========================================
-  # MACOS JOB (AnyDesk Permanent Password Bypass)
+  # MACOS JOB (Native VNC + Accountless Bore Tunnel)
   # ==========================================
   macos-setup:
-    name: "🍏 macOS Remote Runner"
+    name: "🍏 macOS Native VNC Runner"
     if: github.event.inputs.os_choice == 'macOS'
     runs-on: macos-15
     env:
       MAC_PASS: ${{ github.event.inputs.MAC_PASS }}
     steps:
-      - name: "🔓 Create Admin"
-        run: sudo sysadminctl -addUser macadmin -fullName "Mac Admin" -password "CloudPC123!" -admin
-      
-      - name: "🚫 System Prep"
+      - name: "🔓 Create Admin & Prep System"
         run: |
+          sudo sysadminctl -addUser macadmin -fullName "Mac Admin" -password "${{ env.MAC_PASS }}" -admin
           sudo pmset -a sleep 0 displaysleep 0 disksleep 0
-          curl -L -o /Users/runner/wallpaper.jpg "https://images.unsplash.com/photo-1506744626753-dba37c2a9816?q=80&w=2560"
-          osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/Users/runner/wallpaper.jpg"'
-      
-      - name: "🖥️ Install AnyDesk & Tools"
+
+      - name: "🕵️‍♂️ Install Browsers"
         run: |
-          # Install AnyDesk
-          brew install --cask anydesk
-          
-          # Install MostLogin
           curl -L -o /tmp/mostlogin.dmg "https://downsoft.mostlogin.com/MostLogin-x64-setup.dmg"
           MOUNT_ML=$(sudo hdiutil attach /tmp/mostlogin.dmg -nobrowse | grep -o '/Volumes/.*')
           sudo cp -R "$MOUNT_ML"/*.app /Applications/
-          sudo hdiutil detach "$MOUNT_ML" -force
-      
-      - name: "🚀 Configure AnyDesk Daemon & Permanent Password"
+          sudo hdiutil detach "$MOUNT_ML" -force || true
+
+      - name: "🍏 Enable Apple Native Screen Sharing (VNC)"
         run: |
-          # 1. Start the true AnyDesk background service
-          sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service &
+          # This command starts Apple's built-in VNC server, bypassing all 3rd party screen blocks
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -clientopts -setvnclegacy -vnclegacy yes -clientopts -setvncpw -vncpw "${{ env.MAC_PASS }}" -restart -agent -privs -all
+
+      - name: "🌐 Setup Bore Tunnel (No Token Required)"
+        run: |
+          # 1. Download the pre-compiled Bore binary directly (lightning fast)
+          curl -L -o bore.tar.gz "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-apple-darwin.tar.gz"
+          tar -xf bore.tar.gz
+          chmod +x bore
           
-          # 2. Give the daemon time to boot and generate the network ID
-          sleep 15
-          
-          # 3. Inject the permanent password natively via standard input
-          echo "${{ env.MAC_PASS }}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
-          
-          # 4. Extract the AnyDesk ID locally
-          ANYDESK_ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id)
-          echo "ANY_ID=$ANYDESK_ID" >> $GITHUB_ENV
-          
-          # 5. Bring GUI to foreground
-          open /Applications/AnyDesk.app
+          # 2. Push the local VNC port (5900) to the public Bore server
+          ./bore local 5900 --to bore.pub > bore.log 2>&1 &
           sleep 5
-      
+          
+          # 3. Extract the randomized public port it assigned you
+          BORE_PORT=$(grep -o 'listening at bore.pub:[0-9]*' bore.log | grep -o '[0-9]*$')
+          echo "VNC_URL=bore.pub:$BORE_PORT" >> $GITHUB_ENV
+
       - name: "⏳ Connection Window"
         run: |
           echo "============================================================"
-          echo "✅ ANYDESK IS CONFIGURED AND RUNNING"
-          echo "🔑 Permanent Password: ${{ env.MAC_PASS }}"
-          echo "🆔 AnyDesk Address: ${{ env.ANY_ID }}"
+          echo "✅ NATIVE MAC VNC IS RUNNING"
+          echo "🖥️ Open any VNC Viewer (TightVNC, RealVNC, or Mac Screen Sharing)"
+          echo "🌐 Connect to Address: ${{ env.VNC_URL }}"
+          echo "🔑 Password: ${{ env.MAC_PASS }}"
           echo "============================================================"
           while true; do sleep 3600; done
