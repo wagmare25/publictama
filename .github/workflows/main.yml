@@ -1,4 +1,5 @@
 name: "Cloud PC Setup (Windows / macOS)"
+
 on:
   workflow_dispatch:
     inputs:
@@ -19,12 +20,14 @@ on:
         required: false
         default: "123456"
       RUSTDESK_PASSWORD:
-        description: "[macOS] Permanent RustDesk password (for reconnecting after disconnect)"
+        description: "[macOS] Permanent RustDesk password"
         required: false
         default: "Shawon63@"
+
 concurrency:
   group: cloud-pc-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
+
 jobs:
   # ==========================================
   # WINDOWS JOB (Fully Automated MostLogin)
@@ -46,10 +49,12 @@ jobs:
             Write-Error "❌ Missing CRD Code!"
             exit 1
           }
+
       - name: "🔊 Enable Audio"
         run: |
           Set-Service -Name Audiosrv -StartupType Automatic
           Start-Service -Name Audiosrv
+
       - name: "🔧 Install CRD & Virtual Audio"
         run: |
           $userDownloads = Join-Path $env:USERPROFILE 'Downloads'
@@ -60,6 +65,7 @@ jobs:
           Expand-Archive -Path "$userDownloads\VBCABLE.zip" -DestinationPath "$userDownloads\VBCABLE" -Force
           Start-Process -Wait -FilePath "$userDownloads\VBCABLE\VBCABLE_Setup_x64.exe" -ArgumentList "-i", "-h" -Verb RunAs
           Start-Process -Wait -FilePath "msiexec.exe" -ArgumentList "/i `"$userDownloads\crdhost.msi`" /qn /norestart"
+
       - name: "🕵️‍♂️ Silent Install & Launch MostLogin"
         run: |
           $userDownloads = Join-Path $env:USERPROFILE 'Downloads'
@@ -79,13 +85,16 @@ jobs:
               $altPath = "$env:LocalAppData\Programs\MostLogin\MostLogin.exe"
               if (Test-Path $altPath) { Start-Process -FilePath $altPath }
           }
+
       - name: "🌟 Start Chrome Remote Desktop"
         run: |
           cmd.exe /c "$env:RAW_CODE --pin=$env:PIN_INPUT"
+
       - name: "⏳ Keep Alive"
         run: |
           Write-Host "✅ Windows PC Ready. MostLogin should be launched!"
           while ($true) { Start-Sleep -Seconds 300 }
+
   # ==========================================
   # MACOS JOB (Clean Install)
   # ==========================================
@@ -96,11 +105,13 @@ jobs:
     steps:
       - name: "🔓 Create Admin"
         run: sudo sysadminctl -addUser macadmin -fullName "Mac Admin" -password "CloudPC123!" -admin
+
       - name: "🚫 System Prep"
         run: |
           sudo pmset -a sleep 0 displaysleep 0 disksleep 0
           curl -L -o /Users/runner/wallpaper.jpg "https://images.unsplash.com/photo-1506744626753-dba37c2a9816?q=80&w=2560"
           osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/Users/runner/wallpaper.jpg"'
+
       - name: "🖥️ Install Remote Tools"
         run: |
           brew install --cask --no-quarantine rustdesk
@@ -110,11 +121,13 @@ jobs:
           CRD_PKG=$(find "$CRD_VOL" -name "*.pkg" | head -1)
           sudo installer -pkg "$CRD_PKG" -target /
           sudo hdiutil detach "$CRD_VOL" -force
+
       - name: "🕵️‍♂️ Install Browsers"
         run: |
           curl -L -o /tmp/mostlogin.dmg "https://downsoft.mostlogin.com/MostLogin-x64-setup.dmg"
-          MOUNT_ML=$(sudo hdiutil attach /tmp/mostlogin.dmg -nobrowse | grep -o '/Volumes/.*')
-          sudo cp -R "$MOUNT_ML"/*.app /Applications/
+          MOUNT_ML=$(sudo hdiutil attach /tmp/mostlogin.dmg -nobrowse | grep -o '/Volumes/.*' | head -n 1)
+          sudo cp -R "$MOUNT_ML"/*.app /Applications/ || true
+
       - name: "🔐 Set RustDesk Permanent Password"
         env:
           RD_PASSWORD: ${{ github.event.inputs.RUSTDESK_PASSWORD }}
@@ -123,86 +136,61 @@ jobs:
           CONFIG_DIR="$HOME/Library/Application Support/com.rustdesk.RustDesk"
           CONFIG_FILE="$CONFIG_DIR/RustDesk2.toml"
 
-          # Phase 1 — Init: launch RustDesk so it generates device ID + base config
-          echo "⚙️ Phase 1: Initializing RustDesk config (generating device ID)..."
+          echo "⚙️ Phase 1: Initializing RustDesk config..."
           mkdir -p "$CONFIG_DIR"
           open /Applications/RustDesk.app
           sleep 30
 
-          # Phase 2 — Kill app fully BEFORE setting password (avoid second-instance IPC conflict)
           echo "🛑 Phase 2: Stopping RustDesk..."
           pkill -9 -f "RustDesk" 2>/dev/null || true
           sleep 5
 
-          # Phase 3 — Set password while app is stopped (writes hash to config file)
           echo "🔑 Phase 3: Setting permanent password..."
           "$RUSTDESK_BIN" --password "$RD_PASSWORD" &
           RD_PW_PID=$!
           sleep 8
           kill $RD_PW_PID 2>/dev/null || true
           pkill -9 -f "RustDesk" 2>/dev/null || true
-          sleep 3
 
-          # Phase 4 — Patch TOML with Python to enforce permanent-password-only mode
-          echo "📝 Phase 4: Patching config to enforce permanent-password-only mode..."
+          echo "📝 Phase 4: Patching config..."
           python3 - <<'PYEOF'
 import os, re
-config_path = os.path.expanduser(
-    "~/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml"
-)
+config_path = os.path.expanduser("~/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml")
 vm_line = 'verification-method = "use-permanent-password"'
 if not os.path.exists(config_path):
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     with open(config_path, "w") as f:
         f.write(f"[options]\n{vm_line}\n")
-    print("Created fresh config")
 else:
     with open(config_path, "r") as f:
         content = f.read()
     if "verification-method" in content:
         content = re.sub(r'verification-method\s*=\s*"[^"]*"', vm_line, content)
-        print("Updated existing verification-method")
     elif "[options]" in content:
         content = content.replace("[options]", f"[options]\n{vm_line}", 1)
-        print("Inserted under [options]")
     else:
         content += f"\n[options]\n{vm_line}\n"
-        print("Appended [options] section")
     with open(config_path, "w") as f:
         f.write(content)
-    print(f"Saved: {config_path}")
 PYEOF
 
-          # Phase 5 — Relaunch RustDesk with permanent password active
           echo "🚀 Phase 5: Relaunching RustDesk..."
           open /Applications/RustDesk.app
           sleep 25
-
-          # Extract ID from config (avoids spawning a second instance via --get-id)
-          RD_ID=$(grep -oE 'id\s*=\s*"[0-9]+"' "$CONFIG_FILE" 2>/dev/null \
-                  | grep -oE '[0-9]+' | head -1 || echo "check-screenshot")
+          RD_ID=$(grep -oE 'id\s*=\s*"[0-9]+"' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "unknown")
           echo "RD_ID=${RD_ID}" >> $GITHUB_ENV
-
-          echo ""
-          echo "================================================"
-          echo "  🖥️  RustDesk ID       : ${RD_ID}"
-          echo "  🔑  Password (FIXED)  : $RD_PASSWORD"
-          echo "  ♻️  Reconnect anytime  : password won't change"
-          echo "================================================"
 
       - name: "📸 Capture RustDesk Screenshot"
         run: |
           screencapture -x /tmp/rustdesk-id.png
           IMAGE_URL=$(curl -s -F "reqtype=fileupload" -F "fileToUpload=@/tmp/rustdesk-id.png" https://catbox.moe/user/api.php)
           echo "IMAGE_URL=$IMAGE_URL" >> $GITHUB_ENV
+
       - name: "⏳ Connection Window"
         run: |
-          echo ""
           echo "=============================================="
-          echo "  📸 Screenshot : ${{ env.IMAGE_URL }}"
-          echo "  🖥️  RustDesk ID: ${{ env.RD_ID }}"
-          echo "  🔑  Password   : ${{ github.event.inputs.RUSTDESK_PASSWORD }}"
-          echo "  ♻️  This password is PERMANENT — reconnect"
-          echo "     anytime even after disconnect!"
+          echo " 📸 Screenshot : ${{ env.IMAGE_URL }}"
+          echo " 🖥️ RustDesk ID: ${{ env.RD_ID }}"
+          echo " 🔑 Password   : ${{ github.event.inputs.RUSTDESK_PASSWORD }}"
           echo "=============================================="
           while true; do sleep 3600; done
