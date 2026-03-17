@@ -132,56 +132,54 @@ jobs:
         env:
           RD_PASSWORD: ${{ github.event.inputs.RUSTDESK_PASSWORD }}
         run: |
-          RUSTDESK_BIN="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
           CONFIG_DIR="$HOME/Library/Application Support/com.rustdesk.RustDesk"
-          CONFIG_FILE="$CONFIG_DIR/RustDesk2.toml"
-
-          # Phase 1 - Init: launch RustDesk so it generates device ID + base config
-          echo "Phase 1: Initializing RustDesk config (generating device ID)..."
           mkdir -p "$CONFIG_DIR"
+
+          # Step 1: Launch RustDesk briefly to generate device ID and base config
+          echo "Step 1: Initializing RustDesk (generating device ID)..."
           open /Applications/RustDesk.app
           sleep 30
-
-          # Phase 2 - Kill app fully BEFORE setting password (avoid second-instance IPC conflict)
-          echo "Phase 2: Stopping RustDesk..."
-          pkill -9 -f "RustDesk" 2>/dev/null || true
-          sleep 5
-
-          # Phase 3 - Set password while app is stopped (writes hash to config file)
-          echo "Phase 3: Setting permanent password..."
-          "$RUSTDESK_BIN" --password "$RD_PASSWORD" &
-          RD_PW_PID=$!
-          sleep 8
-          kill $RD_PW_PID 2>/dev/null || true
           pkill -9 -f "RustDesk" 2>/dev/null || true
           sleep 3
 
-          echo "Phase 4: Will patch config in next step..."
-
-      - name: "📝 Patch RustDesk Config (Permanent Password Mode)"
-        run: |
+          # Step 2: Install bcrypt and write password hash + config directly via Python
+          echo "Step 2: Writing bcrypt password hash directly to config..."
+          pip3 install bcrypt --quiet
           python3 -c "
-          import os, re
-          config_path = os.path.expanduser('~/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml')
-          vm_line = 'verification-method = \"use-permanent-password\"'
-          if not os.path.exists(config_path):
-              os.makedirs(os.path.dirname(config_path), exist_ok=True)
-              open(config_path, 'w').write('[options]\n' + vm_line + '\n')
-              print('Created fresh config')
-          else:
-              content = open(config_path).read()
-              if 'verification-method' in content:
-                  content = re.sub(r'verification-method\s*=\s*\"[^\"]*\"', vm_line, content)
-                  print('Updated existing verification-method')
-              elif '[options]' in content:
-                  content = content.replace('[options]', '[options]\n' + vm_line, 1)
-                  print('Inserted under [options]')
-              else:
-                  content += '\n[options]\n' + vm_line + '\n'
-                  print('Appended [options] section')
-              open(config_path, 'w').write(content)
-              print('Saved: ' + config_path)
-          "
+import os, re, bcrypt
+pwd = os.environ.get('RD_PASSWORD', '').encode()
+hashed = bcrypt.hashpw(pwd, bcrypt.gensalt()).decode()
+config_path = os.path.expanduser('~/Library/Application Support/com.rustdesk.RustDesk/RustDesk2.toml')
+
+if os.path.exists(config_path):
+    content = open(config_path).read()
+else:
+    content = ''
+
+# Inject or replace password field at top level
+if re.search(r'^password\s*=', content, re.MULTILINE):
+    content = re.sub(r'^password\s*=.*', 'password = \"' + hashed + '\"', content, flags=re.MULTILINE)
+    print('Updated password hash')
+else:
+    content = 'password = \"' + hashed + '\"\n' + content
+    print('Prepended password hash')
+
+# Inject or replace verification-method under [options]
+vm = 'verification-method = \"use-permanent-password\"'
+if 'verification-method' in content:
+    content = re.sub(r'verification-method\s*=\s*\"[^\"]*\"', vm, content)
+    print('Updated verification-method')
+elif '[options]' in content:
+    content = content.replace('[options]', '[options]\n' + vm, 1)
+    print('Inserted verification-method under [options]')
+else:
+    content += '\n[options]\n' + vm + '\n'
+    print('Appended [options] section with verification-method')
+
+open(config_path, 'w').write(content)
+print('Config saved: ' + config_path)
+"
+          echo "Password hash written successfully."
 
       - name: "🚀 Relaunch RustDesk & Get ID"
         env:
